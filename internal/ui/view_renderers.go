@@ -277,7 +277,7 @@ func (m model) renderExportView() string {
 
 	instructions := lipgloss.NewStyle().
 		Foreground(lipgloss.Color(ColorFaint)).
-		Render("←→: Select format, Write filename and press ENTER to export, ESC to cancel")
+		Render("Tab: Select format, Write filename and press ENTER to export, ESC to cancel")
 
 	cwd, err := os.Getwd()
 	if err != nil {
