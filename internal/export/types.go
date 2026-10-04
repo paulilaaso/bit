@@ -20,6 +20,11 @@ var SupportedFormats = []ExportFormat{
 		IsBinary:    true,
 	},
 	{
+		Name:        "SVG",
+		Extension:   ".svg",
+		Description: "SVG vector image (transparent background)",
+	},
+	{
 		Name:        "TXT",
 		Extension:   ".txt",
 		Description: "Plain text file",

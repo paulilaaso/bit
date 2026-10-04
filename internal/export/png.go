@@ -9,38 +9,6 @@ import (
 	"image"
 	"image/color"
 	"image/png"
-	"regexp"
-	"strconv"
-	"unicode/utf8"
-)
-
-// CellSize defines the default pixel dimensions per terminal character cell.
-// 4x scale per dimension = 16x16 pixels per cell.
-const CellSize = 16
-
-// Unicode block characters
-const (
-	FullBlock       = '█' // U+2588
-	UpperHalfBlock  = '▀' // U+2580
-	LowerHalfBlock  = '▄' // U+2584
-	LightShade      = '░' // U+2591
-	MediumShade     = '▒' // U+2592
-	DarkShade       = '▓' // U+2593
-)
-
-// Brightness multipliers for shade characters (0.0 - 1.0)
-const (
-	LightShadeBrightness  = 0.25 // ~25%
-	MediumShadeBrightness = 0.50 // ~50%
-	DarkShadeBrightness   = 0.75 // ~75%
-)
-
-// Regex patterns for parsing ANSI escape sequences
-var (
-	// Matches 24-bit foreground color: ESC[38;2;R;G;Bm
-	colorRegex = regexp.MustCompile(`\x1b\[38;2;(\d+);(\d+);(\d+)m`)
-	// Matches any ANSI escape sequence (for stripping)
-	ansiStripRegex = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 )
 
 // PNGOptions contains configuration for PNG generation
@@ -116,115 +84,23 @@ func GeneratePNG(lines []string, options PNGOptions) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// renderLineToImage renders a single line of ANSI text to the image
+// renderLineToImage renders a single line of ANSI text to the image.
+// Shade alpha is resolved into the RGB value (opaque pixels), matching
+// the shared cell semantics in cells.go.
 func renderLineToImage(img *image.RGBA, line string, lineIdx int, options PNGOptions) {
-	// Default color (white, fully opaque)
-	currentColor := color.RGBA{R: 255, G: 255, B: 255, A: 255}
-	charIdx := 0
-
-	// Process line character by character, tracking ANSI state
-	i := 0
-	lineBytes := []byte(line)
-
-	for i < len(lineBytes) {
-		// Check for ANSI escape sequence (starts with ESC [)
-		if lineBytes[i] == 0x1b && i+1 < len(lineBytes) && lineBytes[i+1] == '[' {
-			// Find end of escape sequence
-			seqStart := i
-			i += 2 // Skip ESC [
-
-			// Scan for terminator (letter)
-			for i < len(lineBytes) && !isAnsiTerminator(lineBytes[i]) {
-				i++
-			}
-			if i < len(lineBytes) {
-				i++ // Include terminator
-			}
-
-			// Parse the sequence
-			seq := string(lineBytes[seqStart:i])
-			if matches := colorRegex.FindStringSubmatch(seq); matches != nil {
-				r, _ := strconv.Atoi(matches[1])
-				g, _ := strconv.Atoi(matches[2])
-				b, _ := strconv.Atoi(matches[3])
-				currentColor = color.RGBA{R: uint8(r), G: uint8(g), B: uint8(b), A: 255}
-			}
-			// Reset codes (\x1b[0m) are handled implicitly - color stays until changed
-			continue
-		}
-
-		// Decode UTF-8 character
-		r, size := utf8.DecodeRune(lineBytes[i:])
-		if r == utf8.RuneError && size == 1 {
-			// Invalid UTF-8, skip byte
-			i++
-			continue
-		}
-
-		// Render the character
-		drawCell(img, charIdx, lineIdx, r, currentColor, options)
-		charIdx++
-		i += size
-	}
-}
-
-// drawCell draws a single character cell to the image
-func drawCell(img *image.RGBA, x, y int, char rune, c color.RGBA, options PNGOptions) {
-	cellX := x * options.CellWidth
-	cellY := y * options.CellHeight
-	halfHeight := options.CellHeight / 2
-
-	switch char {
-	case FullBlock:
-		// Fill entire cell
-		fillRect(img, cellX, cellY, options.CellWidth, options.CellHeight, c)
-
-	case UpperHalfBlock:
-		// Fill top half only
-		fillRect(img, cellX, cellY, options.CellWidth, halfHeight, c)
-
-	case LowerHalfBlock:
-		// Fill bottom half only
-		fillRect(img, cellX, cellY+halfHeight, options.CellWidth, halfHeight, c)
-
-	case LightShade:
-		shadeColor := color.RGBA{
-			R: uint8(float64(c.R) * LightShadeBrightness),
-			G: uint8(float64(c.G) * LightShadeBrightness),
-			B: uint8(float64(c.B) * LightShadeBrightness),
+	forEachPaintedCell(line, func(col int, r rune, rgb [3]uint8, g cellGeometry) {
+		x := int((float64(col) + g.fracX) * float64(options.CellWidth))
+		y := int(float64(lineIdx)*float64(options.CellHeight) + g.fracY*float64(options.CellHeight))
+		w := int(g.fracW * float64(options.CellWidth))
+		h := int(g.fracH * float64(options.CellHeight))
+		c := color.RGBA{
+			R: uint8(float64(rgb[0]) * g.alpha),
+			G: uint8(float64(rgb[1]) * g.alpha),
+			B: uint8(float64(rgb[2]) * g.alpha),
 			A: 255,
 		}
-		fillRect(img, cellX, cellY, options.CellWidth, options.CellHeight, shadeColor)
-
-	case MediumShade:
-		shadeColor := color.RGBA{
-			R: uint8(float64(c.R) * MediumShadeBrightness),
-			G: uint8(float64(c.G) * MediumShadeBrightness),
-			B: uint8(float64(c.B) * MediumShadeBrightness),
-			A: 255,
-		}
-		fillRect(img, cellX, cellY, options.CellWidth, options.CellHeight, shadeColor)
-
-	case DarkShade:
-		shadeColor := color.RGBA{
-			R: uint8(float64(c.R) * DarkShadeBrightness),
-			G: uint8(float64(c.G) * DarkShadeBrightness),
-			B: uint8(float64(c.B) * DarkShadeBrightness),
-			A: 255,
-		}
-		fillRect(img, cellX, cellY, options.CellWidth, options.CellHeight, shadeColor)
-
-	case ' ':
-		// Space - leave transparent (do nothing)
-
-	default:
-		// For any other printable character, fill as full block
-		// This handles edge cases where other characters might be used
-		if char > 32 { // Printable ASCII/Unicode
-			fillRect(img, cellX, cellY, options.CellWidth, options.CellHeight, c)
-		}
-		// Non-printable or control chars: leave transparent
-	}
+		fillRect(img, x, y, w, h, c)
+	})
 }
 
 // fillRect fills a rectangle in the image with the given color
@@ -238,15 +114,4 @@ func fillRect(img *image.RGBA, x, y, width, height int, c color.RGBA) {
 			}
 		}
 	}
-}
-
-// countVisibleChars counts visible (non-ANSI) characters in a line
-func countVisibleChars(line string) int {
-	stripped := ansiStripRegex.ReplaceAllString(line, "")
-	return utf8.RuneCountInString(stripped)
-}
-
-// isAnsiTerminator checks if a byte terminates an ANSI escape sequence
-func isAnsiTerminator(b byte) bool {
-	return (b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z')
 }

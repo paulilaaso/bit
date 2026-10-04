@@ -340,6 +340,9 @@ func (m *model) exportText() {
 	switch m.export.format {
 	case "TXT":
 		content = export.GenerateTXTCode(m.uiState.renderedLines)
+	case "SVG":
+		// renderedLines is never empty here, so generation cannot fail.
+		content, _ = export.GenerateSVG(m.uiState.renderedLines, export.TerminalAspectRatioSVGOptions())
 	case "GO":
 		content = export.GenerateGoCode(m.uiState.renderedLines)
 	case "JS":
